@@ -1,0 +1,110 @@
+import os
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from kaggle_secrets import UserSecretsClient
+
+# --- CONFIGURATION ---
+try:
+    user_secrets = UserSecretsClient()
+    api_key = user_secrets.get_secret("GOOGLE_API_KEY")
+    genai.configure(api_key=api_key)
+except:
+    print("⚠️ WARNING: Please set your 'GOOGLE_API_KEY' in Kaggle Secrets.")
+
+# --- SAFETY SETTINGS (CRITICAL FOR MENTAL HEALTH) ---
+# We set strict blocking for harmful content
+safety_settings = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+}
+
+# --- TOOL 1: MOCK RESOURCE DATABASE ---
+# In a real app, this would be a search API or vector database.
+def get_mental_health_resource(topic):
+    """Returns vetted resources based on a topic."""
+    resources = {
+        "anxiety": "Recommended: 4-7-8 Breathing Technique. Visit: https://www.healthline.com/health/4-7-8-breathing",
+        "depression": "Recommended: 'Feeling Good' by David Burns. Helpline: 988 (USA).",
+        "sleep": "Recommended: Progressive Muscle Relaxation. Try avoiding screens 1 hour before bed.",
+        "general": "Please consider speaking with a licensed therapist. You can find one at PsychologyToday.com"
+    }
+    return resources.get(topic.lower(), resources["general"])
+
+# --- TOOL 2: MOOD LOGGER (SESSION MEMORY) ---
+session_mood_log = []
+
+def log_mood(mood_rating, note):
+    """Logs the user's mood (1-10) and a short note."""
+    entry = {"rating": mood_rating, "note": note}
+    session_mood_log.append(entry)
+    return f"Logged mood: {mood_rating}/10. I'll remember that."
+
+# --- AGENT 1: THE EMPATHY AGENT (LLM) ---
+def empathy_agent(user_input, history):
+    model = genai.GenerativeModel('gemini-2.5-flash')
+    
+    system_prompt = """
+    You are a compassionate, active listener named Serenity. 
+    Your goal is to validate the user's feelings. 
+    DO NOT give medical advice. 
+    DO NOT try to 'fix' the problem immediately. Just listen and reflect.
+    Keep responses short and warm.
+    """
+    
+    chat = model.start_chat(history=history)
+    response = chat.send_message(f"{system_prompt}\nUser: {user_input}", safety_settings=safety_settings)
+    return response.text
+
+# --- AGENT 2: THE RESOURCE AGENT (LLM + TOOLS) ---
+def resource_agent(user_input):
+    # Simple keyword extraction for the prototype
+    if "anxiety" in user_input.lower() or "nervous" in user_input.lower():
+        return get_mental_health_resource("anxiety")
+    elif "sleep" in user_input.lower() or "tired" in user_input.lower():
+        return get_mental_health_resource("sleep")
+    elif "sad" in user_input.lower() or "depressed" in user_input.lower():
+        return get_mental_health_resource("depression")
+    else:
+        return get_mental_health_resource("general")
+
+# --- THE ORCHESTRATOR (ROUTER) ---
+def serenity_system(user_input, history):
+    # 1. CRISIS CHECK (Hardcoded Guardrail)
+    crisis_keywords = ["suicide", "kill myself", "die", "hurt myself", "end it all"]
+    if any(word in user_input.lower() for word in crisis_keywords):
+        return "🚨 **CRITICAL ALERT:** If you are in danger, please call emergency services immediately. \nUSA/Canada: Call 988. \nUK: Call 111. \nI cannot provide medical care."
+
+    # 2. ROUTING LOGIC
+    # If the user asks for "help", "resources", or "tips", route to Resource Agent.
+    # Otherwise, route to Empathy Agent.
+    if any(word in user_input.lower() for word in ["help", "tips", "resource", "technique", "guide"]):
+        print(f"🔄 [System]: Routing to Resource Agent...")
+        return resource_agent(user_input)
+    else:
+        print(f"🔄 [System]: Routing to Empathy Agent...")
+        return empathy_agent(user_input, history)
+
+# --- MAIN EXECUTION LOOP ---
+def run_app():
+    history = []
+    print("buddy: Hello. I'm here to listen. How are you feeling today? (Type 'quit' to exit)")
+    
+    while True:
+        user_in = input("\nYou: ")
+        if user_in.lower() in ['quit', 'exit']:
+            print("💙 Serenity: Take care of yourself.")
+            break
+            
+        response = serenity_system(user_in, history)
+        
+        # Update History for Context
+        history.append({"role": "user", "parts": [user_in]})
+        history.append({"role": "model", "parts": [response]})
+        
+        print(f"buddy: {response}")
+
+# --- RUN IT ---
+if __name__ == "__main__":
+    run_app()
